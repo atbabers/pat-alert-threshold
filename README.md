@@ -361,3 +361,72 @@ pipenv run panther_analysis_tool test
 
 This repository is licensed under the AGPL-3.0
 [license](https://github.com/panther-labs/panther-analysis/blob/master/LICENSE).
+
+## Alert Thresholds and JSON Output
+
+The benchmark command supports alert thresholds to help identify rules that may generate too many alerts:
+
+```bash
+# Set alert thresholds based on rule severity:
+$ panther_analysis_tool benchmark --path path/to/rule.yml --alert-threshold 50
+```
+
+To output benchmark results in JSON format for further processing:
+
+```bash
+$ panther_analysis_tool benchmark --path path/to/rule.yml --out results --json
+```
+
+This will create a JSON file in the specified output directory (e.g., `results/benchmark-1234567890.json`) and also print the JSON output to the console. The JSON output schema is:
+
+```json
+{
+  "rule": {
+    "file_name": "String",
+    "severity": "String",
+    "performance_category": "String"
+  },
+  "benchmark": {
+    "iterations": 50,
+    "hour": "2025-03-21T09:00:00-06:00",
+    "command": "benchmark --path path/to/rule.yml --out results --json"
+  },
+  "performance": {
+    "read_time": {
+      "mean_seconds": 0.5,
+      "median_seconds": 0.48,
+      "max_seconds": 0.7,
+      "min_seconds": 0.4
+    },
+    "processing_time": {
+      "mean_seconds": 1.2,
+      "median_seconds": 1.1,
+      "max_seconds": 1.5,
+      "min_seconds": 1.0
+    }
+  },
+  "alerts": {
+    "mean": 25.5,
+    "median": 24,
+    "max": 35,
+    "min": 18,
+    "threshold": 100,
+    "threshold_exceeded": false
+  },
+  "errors": {
+    "total": 0,
+    "has_errors": false
+  },
+  "detailed_iterations": [
+    {
+      "iteration": 1,
+      "read_time_nanos": 500000000,
+      "processing_time_nanos": 1200000000,
+      "total_alerts": 25,
+      "rule_errors": 0
+    }
+  ]
+}
+```
+
+Rule errors and alert threshold exceedances are reported as warnings and will not cause the benchmark command to fail.
