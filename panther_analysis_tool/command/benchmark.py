@@ -279,17 +279,18 @@ def generate_command_log_text(hour: datetime.datetime) -> List[str]:
 
 
 def write_output(
-    args: BenchmarkArgs,
+    out: str,
     to_write: List[str],
     now: datetime.datetime,
+    json_output: bool = False,
     json_data: Optional[Dict] = None,
 ) -> None:
-    with open(args.out + f"/benchmark-{int(now.timestamp())}", "a", encoding="utf-8") as filename:
+    with open(out + f"/benchmark-{int(now.timestamp())}", "a", encoding="utf-8") as filename:
         to_write.insert(0, f"Writing to file: {filename.name}")
         log_and_write_to_file(to_write, filename)
 
-    if json_data and args.json_output:
-        json_filename = args.out + f"/benchmark-{int(now.timestamp())}.json"
+    if json_data and json_output:
+        json_filename = out + f"/benchmark-{int(now.timestamp())}.json"
         with open(json_filename, "w", encoding="utf-8") as file:
             json.dump(json_data, file, indent=2)
         print(json.dumps(json_data, indent=2))
@@ -465,7 +466,7 @@ def log_output(
         )
     to_write.extend(detailed_records)
 
-    write_output(args, to_write, now, json_data)
+    write_output(args.out, to_write, now, args.json_output, json_data)
     return threshold_exceeded, has_rule_errors
 
 
