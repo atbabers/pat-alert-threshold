@@ -10,11 +10,17 @@ from panther_analysis_tool.backend.client import (
 )
 from panther_analysis_tool.backend.mocks import MockBackend
 from panther_analysis_tool.command.benchmark import (
+    AlertThresholdIteration,
+    BenchmarkArgs,
+    PerformanceTestIteration,
+    RuleErrorIteration,
+    log_output,
     validate_hour,
     validate_log_type,
     validate_rule_count,
 )
 from panther_analysis_tool.constants import AnalysisTypes
+from panther_analysis_tool.core.parse import Filter
 
 
 class TestBenchmark(unittest.TestCase):
@@ -390,3 +396,123 @@ class TestBenchmark(unittest.TestCase):
         )
         ret = validate_hour(hour, log_type, backend)
         self.assertIsInstance(ret, str)
+
+    def test_alert_threshold_exceeded(self) -> None:
+        args = BenchmarkArgs(
+            out=".",
+            path=".",
+            ignore_files=[],
+            filters=[],
+            filters_inverted=[],
+            iterations=1,
+            log_type=None,
+            hour=None,
+            alert_threshold=5,
+        )
+        rule = ClassifiedAnalysis(
+            file_name="test.yml",
+            dir_name="test",
+            analysis_spec={"AnalysisType": AnalysisTypes.RULE, "Severity": "HIGH"},
+        )
+        iterations = [
+            PerformanceTestIteration(
+                read_time_nanos=100000, processing_time_nanos=200000
+            )
+        ]
+        alert_iterations = [AlertThresholdIteration(total_alerts=10)]
+        error_iterations = [RuleErrorIteration(rule_error_count=0)]
+        threshold_exceeded, _ = log_output(
+            args,
+            datetime.datetime.now(),
+            iterations,
+            alert_iterations,
+            error_iterations,
+            rule,
+            datetime.datetime.now(),
+        )
+        self.assertTrue(threshold_exceeded)
+
+    def test_severity_specific_thresholds(self) -> None:
+        args = BenchmarkArgs(
+            out=".",
+            path=".",
+            ignore_files=[],
+            filters=[],
+            filters_inverted=[],
+            iterations=1,
+            log_type=None,
+            hour=None,
+            alert_threshold_critical=10,
+            alert_threshold_high=20,
+        )
+        iterations = [
+            PerformanceTestIteration(
+                read_time_nanos=100000, processing_time_nanos=200000
+            )
+        ]
+        alert_iterations = [AlertThresholdIteration(total_alerts=15)]
+        error_iterations = [RuleErrorIteration(rule_error_count=0)]
+        critical_rule = ClassifiedAnalysis(
+            file_name="test.yml",
+            dir_name="test",
+            analysis_spec={"AnalysisType": AnalysisTypes.RULE, "Severity": "CRITICAL"},
+        )
+        threshold_exceeded, _ = log_output(
+            args,
+            datetime.datetime.now(),
+            iterations,
+            alert_iterations,
+            error_iterations,
+            critical_rule,
+            datetime.datetime.now(),
+        )
+        self.assertTrue(threshold_exceeded)
+        high_rule = ClassifiedAnalysis(
+            file_name="test.yml",
+            dir_name="test",
+            analysis_spec={"AnalysisType": AnalysisTypes.RULE, "Severity": "HIGH"},
+        )
+        threshold_exceeded, _ = log_output(
+            args,
+            datetime.datetime.now(),
+            iterations,
+            alert_iterations,
+            error_iterations,
+            high_rule,
+            datetime.datetime.now(),
+        )
+        self.assertFalse(threshold_exceeded)
+
+    def test_rule_errors_detection(self) -> None:
+        args = BenchmarkArgs(
+            out=".",
+            path=".",
+            ignore_files=[],
+            filters=[],
+            filters_inverted=[],
+            iterations=1,
+            log_type=None,
+            hour=None,
+        )
+        rule = ClassifiedAnalysis(
+            file_name="test.yml",
+            dir_name="test",
+            analysis_spec={"AnalysisType": AnalysisTypes.RULE},
+        )
+        iterations = [
+            PerformanceTestIteration(
+                read_time_nanos=100000, processing_time_nanos=200000
+            )
+        ]
+        alert_iterations = [AlertThresholdIteration(total_alerts=5)]
+        error_iterations = [RuleErrorIteration(rule_error_count=2)]
+        _, has_rule_errors = log_output(
+            args,
+            datetime.datetime.now(),
+            iterations,
+            alert_iterations,
+            error_iterations,
+            rule,
+            datetime.datetime.now(),
+        )
+        self.assertTrue(has_rule_errors)

@@ -1,10 +1,11 @@
 import datetime
 import io
+import json
 import sys
 import zipfile
 from dataclasses import dataclass
 from statistics import mean, median
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import dateutil.parser
 
@@ -33,6 +34,22 @@ class PerformanceTestIteration:
         )
 
 
+class AlertThresholdIteration:
+    def __init__(self, total_alerts: int = 0) -> None:
+        self.total_alerts = total_alerts
+
+    def __str__(self) -> str:
+        return f"Total alerts: {self.total_alerts}"
+
+
+class RuleErrorIteration:
+    def __init__(self, rule_error_count: int = 0) -> None:
+        self.rule_error_count = rule_error_count
+
+    def __str__(self) -> str:
+        return f"Rule errors: {self.rule_error_count}"
+
+
 # pylint: disable=too-many-instance-attributes
 @dataclass
 class BenchmarkArgs:
@@ -44,6 +61,13 @@ class BenchmarkArgs:
     iterations: int
     log_type: Optional[str]
     hour: Optional[datetime.datetime]
+    alert_threshold: Optional[int] = None
+    alert_threshold_info: int = 1000
+    alert_threshold_low: int = 1000
+    alert_threshold_medium: int = 500
+    alert_threshold_high: int = 100
+    alert_threshold_critical: int = 50
+    json_output: bool = False
 
 
 def run(  # pylint: disable=too-many-locals
@@ -93,6 +117,9 @@ def run(  # pylint: disable=too-many-locals
         timeout=timeout.astimezone(),
     )
     iterations: List[PerformanceTestIteration] = []
+    alert_iterations: List[AlertThresholdIteration] = []
+    error_iterations: List[RuleErrorIteration] = []
+
     logged = False
     for _ in range(0, args.iterations):
         replay_response = backend.run_perf_test(params)
@@ -116,8 +143,28 @@ def run(  # pylint: disable=too-many-locals
             )
         )
 
+        alert_iterations.append(
+            AlertThresholdIteration(
+                total_alerts=replay_response.data.replay_summary.total_alerts
+            )
+        )
+
+        error_iterations.append(
+            RuleErrorIteration(
+                rule_error_count=replay_response.data.replay_summary.rule_error_count
+            )
+        )
+
     if not logged:
-        log_output(args.out, hour_or_err, iterations, rule_or_err, now)
+        log_output(
+            args,
+            hour_or_err,
+            iterations,
+            alert_iterations,
+            error_iterations,
+            rule_or_err,
+            now,
+        )
 
     return 0, ""
 
@@ -230,27 +277,49 @@ def generate_command_log_text(hour: datetime.datetime) -> List[str]:
     ]
 
 
-def write_output(out: str, to_write: List[str], now: datetime.datetime) -> None:
+def write_output(
+    out: str,
+    to_write: List[str],
+    now: datetime.datetime,
+    json_output: bool = False,
+    json_data: Optional[Dict] = None,
+) -> None:
     with open(out + f"/benchmark-{int(now.timestamp())}", "a", encoding="utf-8") as filename:
         to_write.insert(0, f"Writing to file: {filename.name}")
         log_and_write_to_file(to_write, filename)
+
+    if json_data and json_output:
+        json_filename = out + f"/benchmark-{int(now.timestamp())}.json"
+        with open(json_filename, "w", encoding="utf-8") as file:
+            json.dump(json_data, file, indent=2)
+        print(json.dumps(json_data, indent=2))
 
 
 def nanos_to_seconds(nanos: float) -> float:
     return datetime.timedelta(microseconds=nanos / 1000).total_seconds()
 
 
-def log_output(
-    out: str,
+def log_output(  # pylint: disable=too-many-arguments,too-many-locals
+    args: BenchmarkArgs,
     hour: datetime.datetime,
     iterations: List[PerformanceTestIteration],
+    alert_iterations: List[AlertThresholdIteration],
+    error_iterations: List[RuleErrorIteration],
     rule: ClassifiedAnalysis,
     now: datetime.datetime,
-) -> None:
+) -> Tuple[bool, bool]:
     to_write = generate_command_log_text(hour)
 
     median_read_time_nanos = median([i.read_time_nanos for i in iterations])
     median_processing_time_nanos = median([i.processing_time_nanos for i in iterations])
+
+    mean_alerts = mean([i.total_alerts for i in alert_iterations])
+    median_alerts = median([i.total_alerts for i in alert_iterations])
+    max_alerts = max(i.total_alerts for i in alert_iterations)
+    min_alerts = min(i.total_alerts for i in alert_iterations)
+
+    total_errors = sum(i.rule_error_count for i in error_iterations)
+    has_rule_errors = total_errors > 0
 
     median_in_minutes = nanos_to_seconds(median_read_time_nanos + median_processing_time_nanos) / 60
     descriptor_string = "Less performant"
@@ -258,6 +327,97 @@ def log_output(
         descriptor_string = "Highly performant"
     elif median_in_minutes >= 10:
         descriptor_string = "At risk of timing out"
+
+    severity = rule.analysis_spec.get("Severity", "").upper()
+
+    if args.alert_threshold is not None:
+        alert_threshold = args.alert_threshold
+    elif severity in ["INFO", "LOW"]:
+        threshold_param = f"alert_threshold_{severity.lower()}"
+        alert_threshold = getattr(args, threshold_param, 1000)
+    elif severity == "MEDIUM":
+        alert_threshold = args.alert_threshold_medium
+    elif severity == "HIGH":
+        alert_threshold = args.alert_threshold_high
+    elif severity == "CRITICAL":
+        alert_threshold = args.alert_threshold_critical
+    else:
+        alert_threshold = 100
+
+    threshold_exceeded = False
+    alert_warning = ""
+    if mean_alerts > alert_threshold:
+        threshold_exceeded = True
+        alert_warning = (
+            f"\n*** WARNING: Average alert count ({mean_alerts:.1f}) exceeds "
+            f"threshold ({alert_threshold}) for {severity} severity rule ***"
+        )
+
+    error_warning = ""
+    if has_rule_errors:
+        error_warning = f"\n*** WARNING: {total_errors} rule errors detected during benchmark ***"
+
+    json_data = None
+    if args.json_output:
+        json_data = {
+            "rule": {
+                "file_name": rule.file_name,
+                "severity": severity,
+                "performance_category": descriptor_string,
+            },
+            "benchmark": {
+                "iterations": len(iterations),
+                "hour": hour.isoformat(),
+                "command": " ".join(sys.argv[1:]),
+            },
+            "performance": {
+                "read_time": {
+                    "mean_seconds": nanos_to_seconds(
+                        mean([i.read_time_nanos for i in iterations])
+                    ),
+                    "median_seconds": nanos_to_seconds(median_read_time_nanos),
+                    "max_seconds": nanos_to_seconds(
+                        max(i.read_time_nanos for i in iterations)
+                    ),
+                    "min_seconds": nanos_to_seconds(
+                        min(i.read_time_nanos for i in iterations)
+                    ),
+                },
+                "processing_time": {
+                    "mean_seconds": nanos_to_seconds(
+                        mean([i.processing_time_nanos for i in iterations])
+                    ),
+                    "median_seconds": nanos_to_seconds(median_processing_time_nanos),
+                    "max_seconds": nanos_to_seconds(
+                        max(i.processing_time_nanos for i in iterations)
+                    ),
+                    "min_seconds": nanos_to_seconds(
+                        min(i.processing_time_nanos for i in iterations)
+                    ),
+                },
+            },
+            "alerts": {
+                "mean": mean_alerts,
+                "median": median_alerts,
+                "max": max_alerts,
+                "min": min_alerts,
+                "threshold": alert_threshold,
+                "threshold_exceeded": threshold_exceeded,
+            },
+            "errors": {"total": total_errors, "has_errors": has_rule_errors},
+            "detailed_iterations": [
+                {
+                    "iteration": i + 1,
+                    "read_time_nanos": perf.read_time_nanos,
+                    "processing_time_nanos": perf.processing_time_nanos,
+                    "total_alerts": alert.total_alerts,
+                    "rule_errors": error.rule_error_count,
+                }
+                for i, (perf, alert, error) in enumerate(
+                    zip(iterations, alert_iterations, error_iterations)
+                )
+            ],
+        }
 
     to_write.extend(
         [
@@ -272,6 +432,14 @@ def log_output(
             f"Max processing time (seconds): {nanos_to_seconds(max([i.processing_time_nanos for i in iterations]))}",  # pylint: disable=R1728
             f"Min processing time (seconds): {nanos_to_seconds(min([i.processing_time_nanos for i in iterations]))}",  # pylint: disable=R1728
             "",
+            f"Mean alerts: {mean_alerts:.1f}",
+            f"Median alerts: {median_alerts}",
+            f"Max alerts: {max_alerts}",
+            f"Min alerts: {min_alerts}",
+            f"Alert threshold: {alert_threshold} (based on {severity} severity)",
+            "",
+            f"Total rule errors: {total_errors}",
+            "",
             "Detection performance ranges:",
             "< 1 minute: Highly performant",
             "1 minute to 10 minutes: Less performant, but unlikely to cause issues unless running alongside other less"
@@ -279,13 +447,29 @@ def log_output(
             "10+ minutes: At risk of timing out. Please improve performance",
             "",
             f"*** Rule {rule.file_name} is: {descriptor_string} ***",
+            alert_warning,
+            error_warning,
             "",
             "Full record:",
         ]
     )
-    to_write.extend([str(iteration) + "\n-----" for iteration in iterations])
 
-    write_output(out, to_write, now)
+    detailed_records = []
+    for i, (perf, alert, error) in enumerate(
+        zip(iterations, alert_iterations, error_iterations)
+    ):
+        detailed_records.append(
+            f"Iteration {i+1}:\n"
+            f"Read time (nanoseconds): {perf.read_time_nanos}\n"
+            f"Processing time (nanoseconds): {perf.processing_time_nanos}\n"
+            f"Total alerts: {alert.total_alerts}\n"
+            f"Rule errors: {error.rule_error_count}\n"
+            f"-----"
+        )
+    to_write.extend(detailed_records)
+
+    write_output(args.out, to_write, now, args.json_output, json_data)
+    return threshold_exceeded, has_rule_errors
 
 
 def log_extreme_timeout(

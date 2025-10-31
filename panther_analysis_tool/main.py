@@ -2330,6 +2330,53 @@ def benchmark_command(
             ),
         ),
     ] = None,
+    alert_threshold: Annotated[
+        Optional[int],
+        typer.Option(
+            help=(
+                "Set a maximum alert threshold. If the mean number of alerts exceeds this threshold, "
+                "a warning will be displayed. If not specified, severity-based defaults are applied: "
+                "Info/Low: 1000, Medium: 500, High: 100, Critical: 50."
+            ),
+        ),
+    ] = None,
+    alert_threshold_info: Annotated[
+        int,
+        typer.Option(
+            help="Maximum alert threshold for Info severity rules. Default: 1000",
+        ),
+    ] = 1000,
+    alert_threshold_low: Annotated[
+        int,
+        typer.Option(
+            help="Maximum alert threshold for Low severity rules. Default: 1000",
+        ),
+    ] = 1000,
+    alert_threshold_medium: Annotated[
+        int,
+        typer.Option(
+            help="Maximum alert threshold for Medium severity rules. Default: 500",
+        ),
+    ] = 500,
+    alert_threshold_high: Annotated[
+        int,
+        typer.Option(
+            help="Maximum alert threshold for High severity rules. Default: 100",
+        ),
+    ] = 100,
+    alert_threshold_critical: Annotated[
+        int,
+        typer.Option(
+            help="Maximum alert threshold for Critical severity rules. Default: 50",
+        ),
+    ] = 50,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Output results in JSON format",
+        ),
+    ] = False,
 ) -> Tuple[int, str]:
     if ignore_files is None:
         ignore_files = []
@@ -2345,6 +2392,13 @@ def benchmark_command(
         iterations=iterations,
         hour=hour,
         log_type=log_type,
+        alert_threshold=alert_threshold,
+        alert_threshold_info=alert_threshold_info,
+        alert_threshold_low=alert_threshold_low,
+        alert_threshold_medium=alert_threshold_medium,
+        alert_threshold_high=alert_threshold_high,
+        alert_threshold_critical=alert_threshold_critical,
+        json_output=json_output,
     )
     return benchmark.run(pat_utils.get_api_backend(api_token, api_host), args)
 
