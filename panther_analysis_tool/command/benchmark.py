@@ -156,7 +156,7 @@ def run(  # pylint: disable=too-many-locals
         )
 
     if not logged:
-        results = log_output(
+        log_output(
             args,
             hour_or_err,
             iterations,
@@ -165,7 +165,6 @@ def run(  # pylint: disable=too-many-locals
             rule_or_err,
             now,
         )
-        alert_threshold_exceeded, has_rule_errors = results
 
     return 0, ""
 
@@ -300,7 +299,7 @@ def nanos_to_seconds(nanos: float) -> float:
     return datetime.timedelta(microseconds=nanos / 1000).total_seconds()
 
 
-def log_output(
+def log_output(  # pylint: disable=too-many-arguments,too-many-locals
     args: BenchmarkArgs,
     hour: datetime.datetime,
     iterations: List[PerformanceTestIteration],
@@ -316,10 +315,10 @@ def log_output(
 
     mean_alerts = mean([i.total_alerts for i in alert_iterations])
     median_alerts = median([i.total_alerts for i in alert_iterations])
-    max_alerts = max([i.total_alerts for i in alert_iterations])
-    min_alerts = min([i.total_alerts for i in alert_iterations])
+    max_alerts = max(i.total_alerts for i in alert_iterations)
+    min_alerts = min(i.total_alerts for i in alert_iterations)
 
-    total_errors = sum([i.rule_error_count for i in error_iterations])
+    total_errors = sum(i.rule_error_count for i in error_iterations)
     has_rule_errors = total_errors > 0
 
     median_in_minutes = nanos_to_seconds(median_read_time_nanos + median_processing_time_nanos) / 60
@@ -349,7 +348,10 @@ def log_output(
     alert_warning = ""
     if mean_alerts > alert_threshold:
         threshold_exceeded = True
-        alert_warning = f"\n*** WARNING: Average alert count ({mean_alerts:.1f}) exceeds threshold ({alert_threshold}) for {severity} severity rule ***"
+        alert_warning = (
+            f"\n*** WARNING: Average alert count ({mean_alerts:.1f}) exceeds "
+            f"threshold ({alert_threshold}) for {severity} severity rule ***"
+        )
 
     error_warning = ""
     if has_rule_errors:
@@ -375,10 +377,10 @@ def log_output(
                     ),
                     "median_seconds": nanos_to_seconds(median_read_time_nanos),
                     "max_seconds": nanos_to_seconds(
-                        max([i.read_time_nanos for i in iterations])
+                        max(i.read_time_nanos for i in iterations)
                     ),
                     "min_seconds": nanos_to_seconds(
-                        min([i.read_time_nanos for i in iterations])
+                        min(i.read_time_nanos for i in iterations)
                     ),
                 },
                 "processing_time": {
@@ -387,10 +389,10 @@ def log_output(
                     ),
                     "median_seconds": nanos_to_seconds(median_processing_time_nanos),
                     "max_seconds": nanos_to_seconds(
-                        max([i.processing_time_nanos for i in iterations])
+                        max(i.processing_time_nanos for i in iterations)
                     ),
                     "min_seconds": nanos_to_seconds(
-                        min([i.processing_time_nanos for i in iterations])
+                        min(i.processing_time_nanos for i in iterations)
                     ),
                 },
             },
